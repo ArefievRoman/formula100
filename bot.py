@@ -13,14 +13,12 @@ from fastapi.responses import JSONResponse
 import uvicorn
 import aiohttp
 
-# ==================== КОНФИГУРАЦИЯ ====================
 MAX_TOKEN = "f9LHodD0cOIBqiz68b2fIVi8e3UZ4V9DZueBGWc_pxKgtGhxh8DLHbmX5iGofyZizBrG9GPiF9YacLbixLvQ"
 PUBLIC_URL = "https://bot-1780836164-3415-arefev-roman.bothost.tech"
 
 MAX_API_URL = "https://botapi.max.ru"
 HEADERS = {"Authorization": MAX_TOKEN, "Content-Type": "application/json"}
 
-# ==================== БАЗА ДАННЫХ ====================
 DB_PATH = "formula100.db"
 
 def init_db():
@@ -52,12 +50,11 @@ def init_db():
 
 init_db()
 
-# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-async def send_message(chat_id: int, text: str):
-    """Отправка сообщения пользователю"""
+async def send_message(user_id: int, text: str, parse_mode: str = "markdown"):
+    """Отправка сообщения пользователю по user_id"""
     url = f"{MAX_API_URL}/messages"
     payload = {
-        "recipient": {"chat_id": chat_id},
+        "recipient": {"user_id": user_id},
         "body": {"text": text}
     }
     async with aiohttp.ClientSession() as session:
@@ -66,9 +63,8 @@ async def send_message(chat_id: int, text: str):
                 err = await resp.text()
                 print(f"send_message error {resp.status}: {err}")
             else:
-                print(f"Сообщение отправлено пользователю {chat_id}")
+                print(f"Сообщение отправлено пользователю {user_id}")
 
-# ==================== МОДУЛЬ WILDBERRIES ====================
 async def fetch_wb_product(article: str) -> Optional[Dict]:
     url = f"https://card.wb.ru/cards/v2/detail?nmId={article}"
     async with aiohttp.ClientSession() as session:
@@ -91,7 +87,6 @@ async def fetch_wb_product(article: str) -> Optional[Dict]:
             print(f"WB error: {e}")
             return None
 
-# ==================== СОЦИАЛЬНЫЙ ГРАФ ====================
 async def save_interaction(user_id: int, person: str, role: str, agg: int, intel: int, pos: int, desc: str):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -124,7 +119,6 @@ async def predict_relationship(user_id: int, person: str) -> Dict:
     else:
         return {'prediction': 'Стабильно', 'advice': 'Обратите внимание на мелочи, они важны', 'confidence': 0.6}
 
-# ==================== ГЕНЕРАЦИЯ МЕНЮ ====================
 async def generate_daily_menu(user_id: int) -> str:
     base = [
         "🌅 *Утро (натощак)*: MAXFIT Collagen 5800 мг",
@@ -136,14 +130,13 @@ async def generate_daily_menu(user_id: int) -> str:
     menu += "\n\n💧 *Важно*: пейте не менее 2 л воды в день!"
     return menu
 
-# ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
 async def handle_update(update: Dict):
     print(f"🔔 Получен update: {json.dumps(update, ensure_ascii=False)}")
     message = update.get('message')
     if not message:
         print("Нет поля message")
         return
-    # Получаем ID пользователя из поля sender (отправитель сообщения)
+    # Получаем user_id отправителя из sender
     sender = message.get('sender')
     if not sender:
         print("Нет поля sender")
@@ -152,27 +145,27 @@ async def handle_update(update: Dict):
     if not user_id:
         print("Нет user_id в sender")
         return
-    print(f"Обработка сообщения от пользователя {user_id}")
     body = message.get('body', {})
     text = body.get('text', '')
     if not text:
         print("Нет текста")
         return
-    
-    # Обновляем активность пользователя
+    print(f"Обработка сообщения от пользователя {user_id}: {text}")
+
+    # Обновляем активность
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)", (user_id, datetime.now()))
     conn.commit()
     conn.close()
-    
+
     if not text.startswith('/'):
         await send_message(user_id, "Используйте команды из /help")
         return
-    
+
     parts = text.split()
     cmd = parts[0].lower()
-    
+
     if cmd == '/start':
         await send_message(user_id,
             "🧬 *Formula 100 AI*\n\nПривет! Я AI-помощник по здоровью.\n\n"
@@ -227,7 +220,6 @@ async def handle_update(update: Dict):
     else:
         await send_message(user_id, "Неизвестная команда. /help")
 
-# ==================== FASTAPI WEBHOOK ====================
 app = FastAPI()
 
 @app.post("/webhook")
@@ -243,7 +235,6 @@ async def webhook_endpoint(request: Request, background_tasks: BackgroundTasks):
 async def root():
     return {"status": "alive"}
 
-# ==================== УСТАНОВКА ВЕБХУКА ====================
 async def set_webhook():
     webhook_url = f"{PUBLIC_URL.rstrip('/')}/webhook"
     url = f"{MAX_API_URL}/subscriptions"
