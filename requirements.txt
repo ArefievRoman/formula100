@@ -1,1 +1,5 @@
-maxapi
+fastapi
+uvicorn
+aiohttp
+aiofiles
+openai
