@@ -6,6 +6,7 @@ import json
 import sqlite3
 from datetime import datetime
 from typing import Dict, Optional
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -13,13 +14,8 @@ import uvicorn
 import aiohttp
 
 # ==================== КОНФИГУРАЦИЯ ====================
-MAX_TOKEN = os.getenv("MAX_TOKEN")
-if not MAX_TOKEN:
-    raise RuntimeError("MAX_TOKEN not set")
-
-PUBLIC_URL = os.getenv("PUBLIC_URL")
-if not PUBLIC_URL:
-    print("⚠️ PUBLIC_URL не задан, вебхук не будет установлен")
+MAX_TOKEN = "f9LHodD0cOIBqiz68b2fIVi8e3UZ4V9DZueBGWc_pxKgtGhxh8DLHbmX5iGofyZizBrG9GPiF9YacLbixLvQ"
+PUBLIC_URL = "https://bot-1780836164-3415-arefev-roman.bothost.tech"
 
 MAX_API_URL = "https://botapi.max.ru"
 HEADERS = {"Authorization": MAX_TOKEN, "Content-Type": "application/json"}
@@ -69,7 +65,6 @@ async def send_message(chat_id: int, text: str, parse_mode: str = "markdown"):
 
 # ==================== МОДУЛЬ WILDBERRIES ====================
 async def fetch_wb_product(article: str) -> Optional[Dict]:
-    """Получает данные о товаре через публичное API Wildberries"""
     url = f"https://card.wb.ru/cards/v2/detail?nmId={article}"
     async with aiohttp.ClientSession() as session:
         try:
@@ -127,7 +122,6 @@ async def predict_relationship(user_id: int, person: str) -> Dict:
 
 # ==================== ГЕНЕРАЦИЯ МЕНЮ ====================
 async def generate_daily_menu(user_id: int) -> str:
-    """Генерирует персональное меню на день (для демо – статическое)"""
     base = [
         "🌅 *Утро (натощак)*: MAXFIT Collagen 5800 мг (коллаген, гиалуронка, C)",
         "🌞 *День (после еды)*: Омега-3-6-9 (Aksu vital) – 2 капсулы",
@@ -149,7 +143,6 @@ async def handle_update(update: Dict):
     user_id = chat_id
     text = message.get('text', '')
 
-    # Обновляем активность пользователя
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)",
@@ -204,7 +197,6 @@ async def handle_update(update: Dict):
         menu = await generate_daily_menu(user_id)
         await send_message(chat_id, menu)
     elif cmd == '/social':
-        # /social Иван коллега 3 8 7 Помог с проектом
         if len(cmd_parts) < 7:
             await send_message(chat_id, "❌ Формат: /social <имя> <роль> <агрессия(1-10)> <интеллект(1-10)> <позитив(1-10)> <событие>")
         else:
@@ -235,7 +227,24 @@ async def handle_update(update: Dict):
         await send_message(chat_id, "Неизвестная команда. /help")
 
 # ==================== ВЕБХУК ====================
-app = FastAPI()
+async def set_webhook():
+    webhook_url = f"{PUBLIC_URL.rstrip('/')}/webhook"
+    url = f"{MAX_API_URL}/subscriptions"
+    payload = {"url": webhook_url, "update_types": ["message_created"]}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=HEADERS, json=payload) as resp:
+            if resp.status == 200:
+                print(f"✅ Вебхук установлен: {webhook_url}")
+            else:
+                text = await resp.text()
+                print(f"❌ Ошибка установки вебхука: {resp.status} - {text}")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await set_webhook()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 @app.post("/webhook")
 async def webhook_endpoint(request: Request, background_tasks: BackgroundTasks):
@@ -250,27 +259,7 @@ async def webhook_endpoint(request: Request, background_tasks: BackgroundTasks):
 async def root():
     return {"status": "alive"}
 
-# ==================== УСТАНОВКА ВЕБХУКА ====================
-async def set_webhook():
-    if not PUBLIC_URL:
-        print("⚠️ PUBLIC_URL не задан, пропускаем установку вебхука")
-        return
-    webhook_url = f"{PUBLIC_URL.rstrip('/')}/webhook"
-    url = f"{MAX_API_URL}/subscriptions"
-    payload = {"url": webhook_url, "update_types": ["message_created"]}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=HEADERS, json=payload) as resp:
-            if resp.status == 200:
-                print(f"✅ Вебхук установлен: {webhook_url}")
-            else:
-                text = await resp.text()
-                print(f"❌ Ошибка установки вебхука: {resp.status} - {text}")
-
 # ==================== ЗАПУСК ====================
-@app.on_event("startup")
-async def startup_event():
-    await set_webhook()
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 3000))
     uvicorn.run(app, host="0.0.0.0", port=port)
