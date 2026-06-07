@@ -1,19 +1,39 @@
 #!/usr/bin/env python3
-import sys
-import os
 import asyncio
 import aiohttp
+import os
 import json
-import sqlite3
-from datetime import datetime
+import sys
+
+# Форсированный вывод
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 TOKEN = os.getenv("MAX_TOKEN")
 if not TOKEN:
-    print("ERROR: MAX_TOKEN not set")
+    print("❌ ОШИБКА: MAX_TOKEN не установлен")
     sys.exit(1)
 
 BASE_URL = "https://botapi.max.ru"
 HEADERS = {"Authorization": TOKEN}
+
+def extract_chat_id(obj):
+    """Рекурсивно ищет chat_id в любом месте update"""
+    if isinstance(obj, dict):
+        if 'chat' in obj and isinstance(obj['chat'], dict) and 'id' in obj['chat']:
+            return obj['chat']['id']
+        if 'from' in obj and isinstance(obj['from'], dict) and 'id' in obj['from']:
+            return obj['from']['id']
+        for v in obj.values():
+            res = extract_chat_id(v)
+            if res:
+                return res
+    elif isinstance(obj, list):
+        for item in obj:
+            res = extract_chat_id(item)
+            if res:
+                return res
+    return None
 
 async def send_message(chat_id, text):
     url = f"{BASE_URL}/sendMessage"
@@ -21,7 +41,7 @@ async def send_message(chat_id, text):
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=HEADERS, json=payload) as resp:
             if resp.status != 200:
-                print(f"Send error: {resp.status}")
+                print(f"Ошибка отправки: {resp.status}")
 
 async def get_updates(offset=None):
     url = f"{BASE_URL}/updates"
@@ -34,47 +54,36 @@ async def get_updates(offset=None):
                 data = await resp.json()
                 return data.get("updates", [])
             else:
-                print(f"Get updates error: {resp.status}")
+                print(f"Ошибка get_updates: {resp.status}")
                 return []
 
-async def handle_message(chat_id, text):
-    if text == "/start":
-        await send_message(chat_id, "Привет! Я Formula 100 AI. Бот работает.")
-    else:
-        await send_message(chat_id, "Напишите /start")
-
 async def main():
-    print("START: Bot started")
-    # init db
-    conn = sqlite3.connect("data.db")
-    c = conn.cursor()
-    c.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
-    conn.commit()
-    conn.close()
-    print("DB init ok")
+    print("🚀 Бот запущен, ожидаем сообщения...")
     last_update_id = 0
     while True:
         updates = await get_updates(offset=last_update_id+1 if last_update_id else None)
         for upd in updates:
-            # диагностика
-            print(f"DEBUG update: {json.dumps(upd, ensure_ascii=False)}")
-            # извлечение chat_id
-            chat_id = None
-            if "message" in upd:
-                msg = upd["message"]
-                if "chat" in msg and "id" in msg["chat"]:
-                    chat_id = msg["chat"]["id"]
-                elif "from" in msg and "id" in msg["from"]:
-                    # иногда в MAX чат = from
-                    chat_id = msg["from"]["id"]
+            # Печатаем полный JSON для отладки
+            print(f"RAW UPDATE: {json.dumps(upd, ensure_ascii=False)}")
+            # Извлекаем chat_id
+            chat_id = extract_chat_id(upd)
             if not chat_id:
-                print("No chat id in update")
+                print("Не удалось извлечь chat_id")
                 continue
-            text = upd.get("message", {}).get("text", "")
+            # Извлекаем текст сообщения
+            text = None
+            if 'message' in upd and isinstance(upd['message'], dict):
+                text = upd['message'].get('text')
             if text:
-                await handle_message(chat_id, text)
-            if "update_id" in upd:
-                last_update_id = upd["update_id"]
+                if text == '/start':
+                    await send_message(chat_id, "Привет! Бот работает. Отправь любое сообщение.")
+                else:
+                    await send_message(chat_id, f"Вы сказали: {text}")
+            else:
+                print(f"Нет текста в update, но есть другие поля")
+            # Обновляем offset
+            if 'update_id' in upd:
+                last_update_id = upd['update_id']
         await asyncio.sleep(1)
 
 if __name__ == "__main__":
