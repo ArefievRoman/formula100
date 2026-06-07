@@ -4,7 +4,7 @@ from maxapi import Bot, Dispatcher
 from maxapi.types import BotStarted, Command, MessageCreated
 
 # Вставь свой токен (можно через переменную окружения, но для простоты пока так)
-TOKEN = "ВАШ_ТОКЕН_БОТА"
+TOKEN = "f9LHodD0cOIBqiz68b2fIVi8e3UZ4V9DZueBGWc_pxKgtGhxh8DLHbmX5iGofyZizBrG9GPiF9YacLbixLvQ"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
