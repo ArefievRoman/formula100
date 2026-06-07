@@ -4,7 +4,7 @@ import os
 import json
 import sys
 
-TOKEN = os.getenv(MAX_TOKEN)
+TOKEN = os.getenv("MAX_TOKEN")
 if not TOKEN:
     print("❌ Ошибка: переменная окружения MAX_TOKEN не установлена")
     sys.exit(1)
