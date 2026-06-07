@@ -14,12 +14,9 @@ import uvicorn
 import aiohttp
 
 # ==================== КОНФИГУРАЦИЯ ====================
-# Токен для авторизации запросов к API платформы
 MAX_TOKEN = "f9LHodD0cOIBqiz68b2fIVi8e3UZ4V9DZueBGWc_pxKgtGhxh8DLHbmX5iGofyZizBrG9GPiF9YacLbixLvQ"
-# Публичный URL, где развернут ваш бот. Платформа будет слать вебхуки сюда.
 PUBLIC_URL = "https://bot-1780836164-3415-arefev-roman.bothost.tech"
 
-# Базовый URL API платформы
 MAX_API_URL = "https://botapi.max.ru"
 HEADERS = {"Authorization": MAX_TOKEN, "Content-Type": "application/json"}
 
@@ -58,11 +55,7 @@ init_db()
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 async def send_message(user_id: int, text: str, parse_mode: str = "markdown"):
-    """
-    Отправляет сообщение пользователю.
-    :param user_id: ID пользователя, которому нужно отправить сообщение.
-    :param text: Текст сообщения.
-    """
+    """Отправляет сообщение пользователю."""
     url = f"{MAX_API_URL}/messages"
     payload = {
         "recipient": {"user_id": user_id},
@@ -72,7 +65,6 @@ async def send_message(user_id: int, text: str, parse_mode: str = "markdown"):
         async with session.post(url, headers=HEADERS, json=payload) as resp:
             if resp.status != 200:
                 err = await resp.text()
-                # Логируем ошибку отправки для отладки
                 print(f"send_message error {resp.status}: {err}")
             else:
                 print(f"Сообщение отправлено пользователю {user_id}")
@@ -129,7 +121,6 @@ async def predict_relationship(user_id: int, person: str) -> Dict:
     if len(rows) < 2:
         return {'prediction': 'Недостаточно данных', 'advice': 'Продолжайте общаться и фиксировать взаимодействия', 'confidence': 0.5}
     
-    # Берем первую и последнюю запись для сравнения динамики
     agg_start, agg_end = rows[0][0], rows[-1][0]
     pos_start, pos_end = rows[0][1], rows[-1][1]
 
@@ -211,9 +202,52 @@ async def handle_update(update: Dict):
         await send_message(user_id, "📖 *Справка*\n/start – приветствие\n/wb – товар\n/daily – меню\n/social – записать\n/predict – прогноз")
         
     elif cmd == '/wb':
-        # ... (остальной код обработчиков команд без изменений)
+        if len(parts) < 2:
+            await send_message(user_id, "❌ Укажите артикул: /wb 12345678")
+        else:
+            article = parts[1]
+            await send_message(user_id, f"🔍 Ищу товар {article}...")
+            prod = await fetch_wb_product(article)
+            if prod:
+                msg = (f"📦 *{prod['name']}*\n🏷 Бренд: {prod['brand']}\n💰 Цена: {prod['price']} руб.\n"
+                       f"⭐ Рейтинг: {prod['rating']}\n📝 Отзывов: {prod['feedbacks']}\n🔗 [Ссылка]({prod['url']})")
+                await send_message(user_id, msg)
+            else:
+                await send_message(user_id, "❌ Товар не найден")
+                
+    elif cmd == '/daily':
+        menu = await generate_daily_menu(user_id)
+        await send_message(user_id, menu)
         
-# ... (остальные обработчики команд '/daily', '/social', '/predict' остаются без изменений)
+    elif cmd == '/social':
+        if len(parts) < 7:
+            await send_message(user_id, "❌ Формат: /social <имя> <роль> <агрессия> <интеллект> <позитив> <событие>")
+        else:
+            _, name, role, agg_str, intel_str, pos_str, event = parts[1:]
+            try:
+                agg = int(agg_str)
+                intel = int(intel_str)
+                pos = int(pos_str)
+                if not (1 <= agg <= 10 and 1 <= intel <= 10 and 1 <= pos <= 10):
+                    raise ValueError
+            except ValueError:
+                await send_message(user_id, "❌ Оценки должны быть числами от 1 до 10")
+                return
+            
+            await save_interaction(user_id, name, role, agg, intel, pos, event)
+            await send_message(user_id, f"✅ Взаимодействие с {name} сохранено")
+            
+    elif cmd == '/predict':
+        if len(parts) < 2:
+            await send_message(user_id, "❌ Укажите имя: /predict Иван")
+        else:
+            name = parts[1]
+            pred = await predict_relationship(user_id, name)
+            await send_message(user_id,
+                f"🔮 *Прогноз отношений с {name}*\n📈 {pred['prediction']}\n💡 {pred['advice']}\n🎯 Уверенность: {pred.get('confidence',0.5)*100:.0f}%")
+                
+    else:
+        await send_message(user_id, "Неизвестная команда. /help")
 
 # ==================== FASTAPI WEBHOOK ====================
 app = FastAPI()
@@ -227,7 +261,7 @@ async def webhook_endpoint(request: Request, background_tasks: BackgroundTasks):
         print(f"Ошибка парсинга JSON: {e}")
         return Response(status_code=400)
     
-    # Обработка происходит в фоновом потоке, чтобы вернуть ответ платформе как можно быстрее.
+    # Обработка происходит в фоновом потоке.
     background_tasks.add_task(handle_update, update)
     
     return JSONResponse({"status": "ok"})
@@ -240,14 +274,8 @@ async def root():
 # ==================== УСТАНОВКА ВЕБХУКА ====================
 async def set_webhook():
     """
-    Устанавливает вебхук для получения обновлений от платформы.
-    
-    Ключевое ИЗМЕНЕНИЕ:
-      Добавлен параметр `scope: "unicast"`. Он сообщает платформе,
-      что вебхук должен получать сообщения для ЛЮБОГО пользователя,
-      а не только для самого бота. Это позволяет боту вести диалоги.
-      Без этого параметра платформа пытается отправить ответ самому боту,
-      что вызывает ошибку "Unknown recipient".
+    Устанавливает вебхук.
+    Ключевое изменение: добавлен параметр `scope: "unicast"` для получения сообщений от пользователей.
     """
     webhook_url = f"{PUBLIC_URL.rstrip('/')}/webhook"
     
@@ -258,7 +286,7 @@ async def set_webhook():
         "update_types": ["message_created"],
         
         # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        "scope": "unicast" 
+        "scope": "unicast"
         # ---------------------
         
     }
@@ -278,12 +306,10 @@ async def lifespan(app: FastAPI):
     """Функция жизненного цикла FastAPI. Выполняется при старте приложения."""
     await set_webhook()
     
-# Назначаем нашу функцию жизненного цикла приложению.
 app.router.lifespan_context = lifespan
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 3000))
     
-    # Запускаем сервер Uvicorn на всех интерфейсах (0.0.0.0) и указанном порту.
-    # При запуске сработает функция `lifespan`, которая установит вебхук.
+    # Запускаем сервер Uvicorn.
     uvicorn.run(app, host="0.0.0.0", port=port)
