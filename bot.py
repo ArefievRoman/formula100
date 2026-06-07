@@ -14,8 +14,13 @@ import uvicorn
 import aiohttp
 
 # ==================== КОНФИГУРАЦИЯ ====================
-MAX_TOKEN = "f9LHodD0cOIBqiz68b2fIVi8e3UZ4V9DZueBGWc_pxKgtGhxh8DLHbmX5iGofyZizBrG9GPiF9YacLbixLvQ"
-PUBLIC_URL = "https://bot-1780836164-3415-arefev-roman.bothost.tech"
+MAX_TOKEN = os.getenv("MAX_TOKEN")
+if not MAX_TOKEN:
+    raise RuntimeError("MAX_TOKEN not set")
+
+PUBLIC_URL = os.getenv("PUBLIC_URL")
+if not PUBLIC_URL:
+    print("⚠️ PUBLIC_URL не задан, вебхук не будет установлен")
 
 MAX_API_URL = "https://botapi.max.ru"
 HEADERS = {"Authorization": MAX_TOKEN, "Content-Type": "application/json"}
@@ -134,15 +139,19 @@ async def generate_daily_menu(user_id: int) -> str:
 
 # ==================== ОБРАБОТКА СООБЩЕНИЙ ====================
 async def handle_update(update: Dict):
+    print(f"🔔 Получен update: {json.dumps(update, ensure_ascii=False)}")
     message = update.get('message')
     if not message:
+        print("Нет поля 'message' в update")
         return
     chat_id = message.get('chat', {}).get('id')
     if not chat_id:
+        print("Нет chat_id в message")
         return
     user_id = chat_id
     text = message.get('text', '')
 
+    # Обновляем активность пользователя
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)",
@@ -154,8 +163,8 @@ async def handle_update(update: Dict):
         await send_message(chat_id, "Используйте команды из /help")
         return
 
-    cmd_parts = text.split()
-    cmd = cmd_parts[0].lower()
+    parts = text.split()
+    cmd = parts[0].lower()
 
     if cmd == '/start':
         await send_message(chat_id,
@@ -177,10 +186,10 @@ async def handle_update(update: Dict):
             "/predict – прогноз\n"
             "/help – эта справка")
     elif cmd == '/wb':
-        if len(cmd_parts) < 2:
+        if len(parts) < 2:
             await send_message(chat_id, "❌ Укажите артикул: /wb 12345678")
         else:
-            article = cmd_parts[1]
+            article = parts[1]
             await send_message(chat_id, f"🔍 Ищу товар {article}...")
             prod = await fetch_wb_product(article)
             if prod:
@@ -197,10 +206,11 @@ async def handle_update(update: Dict):
         menu = await generate_daily_menu(user_id)
         await send_message(chat_id, menu)
     elif cmd == '/social':
-        if len(cmd_parts) < 7:
+        # /social Иван коллега 3 8 7 Помог с проектом
+        if len(parts) < 7:
             await send_message(chat_id, "❌ Формат: /social <имя> <роль> <агрессия(1-10)> <интеллект(1-10)> <позитив(1-10)> <событие>")
         else:
-            _, name, role, agg_str, intel_str, pos_str, event = cmd_parts
+            _, name, role, agg_str, intel_str, pos_str, event = parts
             try:
                 agg = int(agg_str)
                 intel = int(intel_str)
@@ -213,10 +223,10 @@ async def handle_update(update: Dict):
             await save_interaction(user_id, name, role, agg, intel, pos, event)
             await send_message(chat_id, f"✅ Взаимодействие с {name} сохранено")
     elif cmd == '/predict':
-        if len(cmd_parts) < 2:
+        if len(parts) < 2:
             await send_message(chat_id, "❌ Укажите имя: /predict Иван")
         else:
-            name = cmd_parts[1]
+            name = parts[1]
             pred = await predict_relationship(user_id, name)
             await send_message(chat_id,
                 f"🔮 *Прогноз отношений с {name}*\n"
@@ -227,7 +237,35 @@ async def handle_update(update: Dict):
         await send_message(chat_id, "Неизвестная команда. /help")
 
 # ==================== ВЕБХУК ====================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup
+    await set_webhook()
+    yield
+    # shutdown (ничего не делаем)
+
+app = FastAPI(lifespan=lifespan)
+
+@app.post("/webhook")
+async def webhook_endpoint(request: Request, background_tasks: BackgroundTasks):
+    try:
+        update = await request.json()
+    except:
+        return Response(status_code=400)
+    # Печатаем update в консоль для отладки
+    print(f"Webhook received: {json.dumps(update, ensure_ascii=False)}")
+    background_tasks.add_task(handle_update, update)
+    return JSONResponse({"status": "ok"})
+
+@app.get("/")
+async def root():
+    return {"status": "alive"}
+
+# ==================== УСТАНОВКА ВЕБХУКА ====================
 async def set_webhook():
+    if not PUBLIC_URL:
+        print("⚠️ PUBLIC_URL не задан, пропускаем установку вебхука")
+        return
     webhook_url = f"{PUBLIC_URL.rstrip('/')}/webhook"
     url = f"{MAX_API_URL}/subscriptions"
     payload = {"url": webhook_url, "update_types": ["message_created"]}
@@ -239,27 +277,6 @@ async def set_webhook():
                 text = await resp.text()
                 print(f"❌ Ошибка установки вебхука: {resp.status} - {text}")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await set_webhook()
-    yield
-
-app = FastAPI(lifespan=lifespan)
-
-@app.post("/webhook")
-async def webhook_endpoint(request: Request, background_tasks: BackgroundTasks):
-    try:
-        update = await request.json()
-    except:
-        return Response(status_code=400)
-    background_tasks.add_task(handle_update, update)
-    return JSONResponse({"status": "ok"})
-
-@app.get("/")
-async def root():
-    return {"status": "alive"}
-
-# ==================== ЗАПУСК ====================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 3000))
     uvicorn.run(app, host="0.0.0.0", port=port)
