@@ -55,7 +55,7 @@ init_db()
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 async def send_message(user_id: int, text: str, parse_mode: str = "markdown"):
-    """Отправляет сообщение пользователю."""
+    """Отправляет сообщение через правильный эндпоинт /messages, используя user_id получателя"""
     url = f"{MAX_API_URL}/messages"
     payload = {
         "recipient": {"user_id": user_id},
@@ -71,7 +71,6 @@ async def send_message(user_id: int, text: str, parse_mode: str = "markdown"):
 
 # ==================== МОДУЛЬ WILDBERRIES ====================
 async def fetch_wb_product(article: str) -> Optional[Dict]:
-    """Получает информацию о товаре с Wildberries по артикулу."""
     url = f"https://card.wb.ru/cards/v2/detail?nmId={article}"
     async with aiohttp.ClientSession() as session:
         try:
@@ -95,7 +94,6 @@ async def fetch_wb_product(article: str) -> Optional[Dict]:
 
 # ==================== СОЦИАЛЬНЫЙ ГРАФ ====================
 async def save_interaction(user_id: int, person: str, role: str, agg: int, intel: int, pos: int, desc: str):
-    """Сохраняет запись о социальном взаимодействии в базу данных."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
@@ -106,7 +104,6 @@ async def save_interaction(user_id: int, person: str, role: str, agg: int, intel
     conn.close()
 
 async def predict_relationship(user_id: int, person: str) -> Dict:
-    """Анализирует историю взаимодействий и делает прогноз."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
@@ -117,13 +114,10 @@ async def predict_relationship(user_id: int, person: str) -> Dict:
     """, (user_id, person))
     rows = c.fetchall()
     conn.close()
-
     if len(rows) < 2:
         return {'prediction': 'Недостаточно данных', 'advice': 'Продолжайте общаться и фиксировать взаимодействия', 'confidence': 0.5}
-    
     agg_start, agg_end = rows[0][0], rows[-1][0]
     pos_start, pos_end = rows[0][1], rows[-1][1]
-
     if agg_end < agg_start and pos_end > pos_start:
         return {'prediction': 'Отношения улучшаются', 'advice': 'Отлично, продолжайте в том же духе!', 'confidence': 0.75}
     elif agg_end > agg_start and pos_end < pos_start:
@@ -133,7 +127,6 @@ async def predict_relationship(user_id: int, person: str) -> Dict:
 
 # ==================== ГЕНЕРАЦИЯ МЕНЮ ====================
 async def generate_daily_menu(user_id: int) -> str:
-    """Генерирует текст ежедневного меню."""
     base = [
         "🌅 *Утро (натощак)*: MAXFIT Collagen 5800 мг",
         "🌞 *День*: Омега-3-6-9 – 2 капсулы",
@@ -146,41 +139,33 @@ async def generate_daily_menu(user_id: int) -> str:
 
 # ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
 async def handle_update(update: Dict):
-    """Основная функция для обработки входящих обновлений (сообщений)."""
     print(f"🔔 Получен update: {json.dumps(update, ensure_ascii=False)[:300]}")
-    
     message = update.get('message')
     if not message:
         print("Нет поля message")
         return
-
     sender = message.get('sender')
     if not sender:
         print("Нет поля sender")
         return
-
     user_id = sender.get('user_id')
     if not user_id:
         print("Нет user_id в sender")
         return
-
     body = message.get('body', {})
     text = body.get('text', '')
-    
     if not text:
         print("Нет текста")
         return
-
     print(f"Обработка сообщения от пользователя {user_id}: {text}")
     
-    # Обновляем время последней активности пользователя в БД
+    # Обновляем активность пользователя в БД
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)", (user_id, datetime.now()))
     conn.commit()
     conn.close()
     
-    # Обработка команд
     if not text.startswith('/'):
         await send_message(user_id, "Используйте команды из /help")
         return
@@ -254,21 +239,18 @@ app = FastAPI()
 
 @app.post("/webhook")
 async def webhook_endpoint(request: Request, background_tasks: BackgroundTasks):
-    """Точка входа для вебхуков от платформы."""
     try:
         update = await request.json()
     except Exception as e:
         print(f"Ошибка парсинга JSON: {e}")
         return Response(status_code=400)
     
-    # Обработка происходит в фоновом потоке.
     background_tasks.add_task(handle_update, update)
     
     return JSONResponse({"status": "ok"})
 
 @app.get("/")
 async def root():
-    """Простой хелсчек для проверки работоспособности сервера."""
     return {"status": "alive"}
 
 # ==================== УСТАНОВКА ВЕБХУКА ====================
@@ -306,7 +288,9 @@ async def lifespan(app: FastAPI):
     """Функция жизненного цикла FastAPI. Выполняется при старте приложения."""
     await set_webhook()
     
-app.router.lifespan_context = lifespan
+# ПРАВИЛЬНОЕ ПРИСВАИВАНИЕ (КЛЮЧЕВОЙ МОМЕНТ!)
+# Передаем саму функцию `lifespan`, а не её вызов `lifespan(app)`
+app.router.lifespan_context = lifespan 
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 3000))
