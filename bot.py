@@ -1,29 +1,15 @@
-#!/usr/bin/env python3
 import asyncio
 import aiohttp
+from aiohttp import web
 import os
 import json
-import sys
-
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
 
 TOKEN = os.getenv("MAX_TOKEN")
 if not TOKEN:
-    print("❌ MAX_TOKEN not set")
-    sys.exit(1)
+    raise Exception("MAX_TOKEN not set")
 
 BASE_URL = "https://botapi.max.ru"
 HEADERS = {"Authorization": TOKEN}
-
-async def delete_webhook():
-    url = f"{BASE_URL}/deleteWebhook"
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=HEADERS) as resp:
-            print(f"deleteWebhook status: {resp.status}")
-            if resp.status == 200:
-                data = await resp.json()
-                print(f"deleteWebhook response: {data}")
 
 async def send_message(chat_id, text):
     url = f"{BASE_URL}/sendMessage"
@@ -31,48 +17,46 @@ async def send_message(chat_id, text):
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=HEADERS, json=payload) as resp:
             if resp.status != 200:
-                print(f"sendMessage error: {resp.status}")
+                print(f"Send error: {resp.status}")
 
-async def get_updates(offset=None):
-    url = f"{BASE_URL}/getUpdates"
-    params = {"timeout": 30}
-    if offset:
-        params["offset"] = offset
+async def handle_webhook(request):
+    data = await request.json()
+    print(f"Webhook received: {json.dumps(data, ensure_ascii=False)}")
+    # Извлекаем chat_id и текст
+    if 'message' in data:
+        msg = data['message']
+        chat_id = msg.get('chat', {}).get('id') or msg.get('from', {}).get('id')
+        text = msg.get('text', '')
+        if chat_id:
+            await send_message(chat_id, f"Эхо: {text}")
+    return web.Response(text="OK")
+
+async def set_webhook(webhook_url):
+    url = f"{BASE_URL}/setWebhook"
+    payload = {"url": webhook_url}
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=HEADERS, params=params) as resp:
+        async with session.post(url, headers=HEADERS, json=payload) as resp:
+            print(f"setWebhook status: {resp.status}")
             if resp.status == 200:
-                data = await resp.json()
-                return data.get("updates", [])
-            else:
-                print(f"getUpdates error: {resp.status}")
-                return []
+                print(await resp.json())
 
 async def main():
-    print("🚀 Бот запущен, удаляем вебхук...")
-    await delete_webhook()
-    print("🚀 Ожидаем сообщения...")
-    last_update_id = 0
-    while True:
-        updates = await get_updates(offset=last_update_id+1 if last_update_id else None)
-        for upd in updates:
-            print(f"RAW: {json.dumps(upd, ensure_ascii=False)}")
-            # Ищем chat_id
-            chat_id = None
-            if 'message' in upd:
-                msg = upd['message']
-                if 'chat' in msg and 'id' in msg['chat']:
-                    chat_id = msg['chat']['id']
-                elif 'from' in msg and 'id' in msg['from']:
-                    chat_id = msg['from']['id']
-            if not chat_id:
-                print("No chat_id")
-                continue
-            text = upd.get('message', {}).get('text', '')
-            if text:
-                await send_message(chat_id, f"Эхо: {text}")
-            if 'update_id' in upd:
-                last_update_id = upd['update_id']
-        await asyncio.sleep(1)
+    # Получаем URL вебхука из переменной окружения (Bothost предоставляет)
+    webhook_url = os.getenv("WEBHOOK_URL")
+    if not webhook_url:
+        print("WEBHOOK_URL not set, using default /webhook")
+        webhook_url = "/webhook"  # относительный путь
+    else:
+        await set_webhook(webhook_url)
+
+    app = web.Application()
+    app.router.add_post("/webhook", handle_webhook)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", "8080")))
+    await site.start()
+    print(f"Webhook server started on port {os.getenv('PORT', '8080')}")
+    await asyncio.Event().wait()  # бесконечное ожидание
 
 if __name__ == "__main__":
     asyncio.run(main())
