@@ -4,7 +4,7 @@ import os
 print("START: Бот начал работу", flush=True)
 sys.stdout.flush()
 
-TOKEN = os.getenv("MAX_TOKEN")
+TOKEN = "f9LHodD0cOIBqiz68b2fIVi8e3UZ4V9DZueBGWc_pxKgtGhxh8DLHbmX5iGofyZizBrG9GPiF9YacLbixLvQ"
 if not TOKEN:
     print("ERROR: MAX_TOKEN not set", flush=True)
     sys.exit(1)
