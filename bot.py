@@ -53,11 +53,11 @@ def init_db():
 init_db()
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-async def send_message(chat_id: int, text: str, parse_mode: str = "markdown"):
-    """Отправка сообщения через правильный эндпоинт /messages"""
+async def send_message(user_id: int, text: str, parse_mode: str = "markdown"):
+    """Отправка сообщения получателю по его user_id"""
     url = f"{MAX_API_URL}/messages"
     payload = {
-        "recipient": {"chat_id": chat_id},
+        "recipient": {"user_id": user_id},
         "body": {"text": text}
     }
     async with aiohttp.ClientSession() as session:
@@ -66,7 +66,7 @@ async def send_message(chat_id: int, text: str, parse_mode: str = "markdown"):
                 err = await resp.text()
                 print(f"send_message error {resp.status}: {err}")
             else:
-                print(f"Сообщение отправлено в чат {chat_id}")
+                print(f"Сообщение отправлено пользователю {user_id}")
 
 # ==================== МОДУЛЬ WILDBERRIES ====================
 async def fetch_wb_product(article: str) -> Optional[Dict]:
@@ -143,37 +143,38 @@ async def handle_update(update: Dict):
     if not message:
         print("Нет поля message")
         return
-    recipient = message.get('recipient')
-    if not recipient:
-        print("Нет поля recipient")
+    # Берём user_id отправителя из sender
+    sender = message.get('sender')
+    if not sender:
+        print("Нет поля sender")
         return
-    chat_id = recipient.get('chat_id')
-    if not chat_id:
-        print("Нет chat_id")
+    user_id = sender.get('user_id')
+    if not user_id:
+        print("Нет user_id в sender")
         return
     body = message.get('body', {})
     text = body.get('text', '')
     if not text:
         print("Нет текста")
         return
-    print(f"Обработка сообщения от {chat_id}: {text}")
+    print(f"Обработка сообщения от пользователя {user_id}: {text}")
     
     # Обновляем активность
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)", (chat_id, datetime.now()))
+    c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)", (user_id, datetime.now()))
     conn.commit()
     conn.close()
     
     if not text.startswith('/'):
-        await send_message(chat_id, "Используйте команды из /help")
+        await send_message(user_id, "Используйте команды из /help")
         return
     
     parts = text.split()
     cmd = parts[0].lower()
     
     if cmd == '/start':
-        await send_message(chat_id,
+        await send_message(user_id,
             "🧬 *Formula 100 AI*\n\nПривет! Я AI-помощник по здоровью.\n\n"
             "📌 *Команды:*\n"
             "/wb <артикул> – информация о товаре на Wildberries\n"
@@ -182,26 +183,26 @@ async def handle_update(update: Dict):
             "/predict <имя> – прогноз развития отношений\n"
             "/help – справка")
     elif cmd == '/help':
-        await send_message(chat_id, "📖 *Справка*\n/start – приветствие\n/wb – товар\n/daily – меню\n/social – записать\n/predict – прогноз")
+        await send_message(user_id, "📖 *Справка*\n/start – приветствие\n/wb – товар\n/daily – меню\n/social – записать\n/predict – прогноз")
     elif cmd == '/wb':
         if len(parts) < 2:
-            await send_message(chat_id, "❌ Укажите артикул: /wb 12345678")
+            await send_message(user_id, "❌ Укажите артикул: /wb 12345678")
         else:
             article = parts[1]
-            await send_message(chat_id, f"🔍 Ищу товар {article}...")
+            await send_message(user_id, f"🔍 Ищу товар {article}...")
             prod = await fetch_wb_product(article)
             if prod:
                 msg = (f"📦 *{prod['name']}*\n🏷 Бренд: {prod['brand']}\n💰 Цена: {prod['price']} руб.\n"
                        f"⭐ Рейтинг: {prod['rating']}\n📝 Отзывов: {prod['feedbacks']}\n🔗 [Ссылка]({prod['url']})")
-                await send_message(chat_id, msg)
+                await send_message(user_id, msg)
             else:
-                await send_message(chat_id, "❌ Товар не найден")
+                await send_message(user_id, "❌ Товар не найден")
     elif cmd == '/daily':
-        menu = await generate_daily_menu(chat_id)
-        await send_message(chat_id, menu)
+        menu = await generate_daily_menu(user_id)
+        await send_message(user_id, menu)
     elif cmd == '/social':
         if len(parts) < 7:
-            await send_message(chat_id, "❌ Формат: /social <имя> <роль> <агрессия> <интеллект> <позитив> <событие>")
+            await send_message(user_id, "❌ Формат: /social <имя> <роль> <агрессия> <интеллект> <позитив> <событие>")
         else:
             _, name, role, agg_str, intel_str, pos_str, event = parts
             try:
@@ -211,20 +212,20 @@ async def handle_update(update: Dict):
                 if not (1 <= agg <= 10 and 1 <= intel <= 10 and 1 <= pos <= 10):
                     raise ValueError
             except:
-                await send_message(chat_id, "❌ Оценки должны быть числами от 1 до 10")
+                await send_message(user_id, "❌ Оценки должны быть числами от 1 до 10")
                 return
-            await save_interaction(chat_id, name, role, agg, intel, pos, event)
-            await send_message(chat_id, f"✅ Взаимодействие с {name} сохранено")
+            await save_interaction(user_id, name, role, agg, intel, pos, event)
+            await send_message(user_id, f"✅ Взаимодействие с {name} сохранено")
     elif cmd == '/predict':
         if len(parts) < 2:
-            await send_message(chat_id, "❌ Укажите имя: /predict Иван")
+            await send_message(user_id, "❌ Укажите имя: /predict Иван")
         else:
             name = parts[1]
-            pred = await predict_relationship(chat_id, name)
-            await send_message(chat_id,
+            pred = await predict_relationship(user_id, name)
+            await send_message(user_id,
                 f"🔮 *Прогноз отношений с {name}*\n📈 {pred['prediction']}\n💡 {pred['advice']}\n🎯 Уверенность: {pred.get('confidence',0.5)*100:.0f}%")
     else:
-        await send_message(chat_id, "Неизвестная команда. /help")
+        await send_message(user_id, "Неизвестная команда. /help")
 
 # ==================== FASTAPI WEBHOOK ====================
 app = FastAPI()
