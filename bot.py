@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import os
 from maxapi import Bot, Dispatcher
 from maxapi.types import BotStarted, Command, MessageCreated
 
-# Вставь свой токен (можно через переменную окружения, но для простоты пока так)
-TOKEN = "f9LHodD0cOIBqiz68b2fIVi8e3UZ4V9DZueBGWc_pxKgtGhxh8DLHbmX5iGofyZizBrG9GPiF9YacLbixLvQ"
+TOKEN = os.getenv("MAX_TOKEN")
+if not TOKEN:
+    raise RuntimeError("MAX_TOKEN environment variable not set")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
