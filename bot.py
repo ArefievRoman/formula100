@@ -14,13 +14,8 @@ import uvicorn
 import aiohttp
 
 # ==================== КОНФИГУРАЦИЯ ====================
-MAX_TOKEN = os.getenv("MAX_TOKEN")
-if not MAX_TOKEN:
-    raise RuntimeError("MAX_TOKEN not set")
-
-PUBLIC_URL = os.getenv("PUBLIC_URL")
-if not PUBLIC_URL:
-    print("⚠️ PUBLIC_URL не задан, вебхук не будет установлен")
+MAX_TOKEN = "f9LHodD0cOIBqiz68b2fIVi8e3UZ4V9DZueBGWc_pxKgtGhxh8DLHbmX5iGofyZizBrG9GPiF9YacLbixLvQ"
+PUBLIC_URL = "https://bot-1780836164-3415-arefev-roman.bothost.tech"
 
 MAX_API_URL = "https://botapi.max.ru"
 HEADERS = {"Authorization": MAX_TOKEN, "Content-Type": "application/json"}
@@ -36,8 +31,7 @@ def init_db():
             user_id INTEGER PRIMARY KEY,
             first_name TEXT,
             registered_at TIMESTAMP,
-            last_activity TIMESTAMP,
-            health_data TEXT
+            last_activity TIMESTAMP
         )
     """)
     c.execute("""
@@ -82,7 +76,6 @@ async def fetch_wb_product(article: str) -> Optional[Dict]:
                             'name': p.get('name', 'Неизвестно'),
                             'brand': p.get('brand', 'Неизвестно'),
                             'price': p.get('priceU', 0) // 100,
-                            'sale_price': p.get('salePriceU', 0) // 100,
                             'rating': p.get('rating', 0),
                             'feedbacks': p.get('feedbacks', 0),
                             'url': f"https://www.wildberries.ru/catalog/{article}/detail.aspx"
@@ -92,7 +85,7 @@ async def fetch_wb_product(article: str) -> Optional[Dict]:
             print(f"WB error: {e}")
             return None
 
-# ==================== СОЦИАЛЬНЫЙ ГРАФ И ПРОГНОЗЫ ====================
+# ==================== СОЦИАЛЬНЫЙ ГРАФ ====================
 async def save_interaction(user_id: int, person: str, role: str, agg: int, intel: int, pos: int, desc: str):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -128,63 +121,67 @@ async def predict_relationship(user_id: int, person: str) -> Dict:
 # ==================== ГЕНЕРАЦИЯ МЕНЮ ====================
 async def generate_daily_menu(user_id: int) -> str:
     base = [
-        "🌅 *Утро (натощак)*: MAXFIT Collagen 5800 мг (коллаген, гиалуронка, C)",
-        "🌞 *День (после еды)*: Омега-3-6-9 (Aksu vital) – 2 капсулы",
-        "🌙 *Вечер*: Синбиотик Будь здоров! (10 штаммов) – 2 капсулы",
-        "🧠 *Ноотроп*: Ноотроп Память (ВИС) – 2 капсулы утром"
+        "🌅 *Утро (натощак)*: MAXFIT Collagen 5800 мг",
+        "🌞 *День*: Омега-3-6-9 – 2 капсулы",
+        "🌙 *Вечер*: Синбиотик – 2 капсулы",
+        "🧠 *Ноотроп*: Ноотроп Память – 2 капсулы утром"
     ]
     menu = "\n".join(base)
     menu += "\n\n💧 *Важно*: пейте не менее 2 л воды в день!"
     return menu
 
-# ==================== ОБРАБОТКА СООБЩЕНИЙ ====================
+# ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
 async def handle_update(update: Dict):
     print(f"🔔 Получен update: {json.dumps(update, ensure_ascii=False)}")
+    # Извлекаем chat_id правильно (в MAX он в message.recipient.chat_id)
     message = update.get('message')
     if not message:
-        print("Нет поля 'message' в update")
+        print("Нет поля message")
         return
-    chat_id = message.get('chat', {}).get('id')
+    recipient = message.get('recipient')
+    if not recipient:
+        print("Нет поля recipient")
+        return
+    chat_id = recipient.get('chat_id')
     if not chat_id:
-        print("Нет chat_id в message")
+        print("Нет chat_id в recipient")
         return
-    user_id = chat_id
-    text = message.get('text', '')
-
+    
+    # Получаем текст
+    body = message.get('body', {})
+    text = body.get('text', '')
+    if not text:
+        print("Нет текста")
+        return
+    
+    print(f"Обработка сообщения от {chat_id}: {text}")
+    
     # Обновляем активность пользователя
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)",
-              (user_id, datetime.now()))
+    c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)", (chat_id, datetime.now()))
     conn.commit()
     conn.close()
-
+    
+    # Обработка команд
     if not text.startswith('/'):
         await send_message(chat_id, "Используйте команды из /help")
         return
-
+    
     parts = text.split()
     cmd = parts[0].lower()
-
+    
     if cmd == '/start':
         await send_message(chat_id,
-            "🧬 *Formula 100 AI*\n\n"
-            "Привет! Я твой AI-помощник по здоровью.\n\n"
+            "🧬 *Formula 100 AI*\n\nПривет! Я AI-помощник по здоровью.\n\n"
             "📌 *Команды:*\n"
             "/wb <артикул> – информация о товаре на Wildberries\n"
             "/daily – персональное меню на сегодня\n"
-            "/social <имя> <роль> <агрессия> <интеллект> <позитив> <событие> – сохранить взаимодействие\n"
+            "/social <имя> <роль> <агрессия(1-10)> <интеллект(1-10)> <позитив(1-10)> <событие>\n"
             "/predict <имя> – прогноз развития отношений\n"
-            "/help – эта справка")
+            "/help – справка")
     elif cmd == '/help':
-        await send_message(chat_id,
-            "📖 *Справка*\n"
-            "/start – приветствие\n"
-            "/wb 12345678 – данные о товаре WB\n"
-            "/daily – моё меню\n"
-            "/social – записать взаимодействие\n"
-            "/predict – прогноз\n"
-            "/help – эта справка")
+        await send_message(chat_id, "📖 *Справка*\n/start – приветствие\n/wb – товар\n/daily – меню\n/social – записать\n/predict – прогноз")
     elif cmd == '/wb':
         if len(parts) < 2:
             await send_message(chat_id, "❌ Укажите артикул: /wb 12345678")
@@ -193,22 +190,17 @@ async def handle_update(update: Dict):
             await send_message(chat_id, f"🔍 Ищу товар {article}...")
             prod = await fetch_wb_product(article)
             if prod:
-                msg = (f"📦 *{prod['name']}*\n"
-                       f"🏷 Бренд: {prod['brand']}\n"
-                       f"💰 Цена: {prod['price']} руб.\n"
-                       f"⭐ Рейтинг: {prod['rating']}\n"
-                       f"📝 Отзывов: {prod['feedbacks']}\n"
-                       f"🔗 [Ссылка]({prod['url']})")
+                msg = (f"📦 *{prod['name']}*\n🏷 Бренд: {prod['brand']}\n💰 Цена: {prod['price']} руб.\n"
+                       f"⭐ Рейтинг: {prod['rating']}\n📝 Отзывов: {prod['feedbacks']}\n🔗 [Ссылка]({prod['url']})")
                 await send_message(chat_id, msg)
             else:
                 await send_message(chat_id, "❌ Товар не найден")
     elif cmd == '/daily':
-        menu = await generate_daily_menu(user_id)
+        menu = await generate_daily_menu(chat_id)
         await send_message(chat_id, menu)
     elif cmd == '/social':
-        # /social Иван коллега 3 8 7 Помог с проектом
         if len(parts) < 7:
-            await send_message(chat_id, "❌ Формат: /social <имя> <роль> <агрессия(1-10)> <интеллект(1-10)> <позитив(1-10)> <событие>")
+            await send_message(chat_id, "❌ Формат: /social <имя> <роль> <агрессия> <интеллект> <позитив> <событие>")
         else:
             _, name, role, agg_str, intel_str, pos_str, event = parts
             try:
@@ -218,33 +210,23 @@ async def handle_update(update: Dict):
                 if not (1 <= agg <= 10 and 1 <= intel <= 10 and 1 <= pos <= 10):
                     raise ValueError
             except:
-                await send_message(chat_id, "❌ Агрессия, интеллект, позитив должны быть числами от 1 до 10")
+                await send_message(chat_id, "❌ Оценки должны быть числами от 1 до 10")
                 return
-            await save_interaction(user_id, name, role, agg, intel, pos, event)
+            await save_interaction(chat_id, name, role, agg, intel, pos, event)
             await send_message(chat_id, f"✅ Взаимодействие с {name} сохранено")
     elif cmd == '/predict':
         if len(parts) < 2:
             await send_message(chat_id, "❌ Укажите имя: /predict Иван")
         else:
             name = parts[1]
-            pred = await predict_relationship(user_id, name)
+            pred = await predict_relationship(chat_id, name)
             await send_message(chat_id,
-                f"🔮 *Прогноз отношений с {name}*\n"
-                f"📈 {pred['prediction']}\n"
-                f"💡 {pred['advice']}\n"
-                f"🎯 Уверенность: {pred.get('confidence', 0.5)*100:.0f}%")
+                f"🔮 *Прогноз отношений с {name}*\n📈 {pred['prediction']}\n💡 {pred['advice']}\n🎯 Уверенность: {pred.get('confidence',0.5)*100:.0f}%")
     else:
         await send_message(chat_id, "Неизвестная команда. /help")
 
-# ==================== ВЕБХУК ====================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # startup
-    await set_webhook()
-    yield
-    # shutdown (ничего не делаем)
-
-app = FastAPI(lifespan=lifespan)
+# ==================== FASTAPI WEBHOOK ====================
+app = FastAPI()
 
 @app.post("/webhook")
 async def webhook_endpoint(request: Request, background_tasks: BackgroundTasks):
@@ -252,8 +234,6 @@ async def webhook_endpoint(request: Request, background_tasks: BackgroundTasks):
         update = await request.json()
     except:
         return Response(status_code=400)
-    # Печатаем update в консоль для отладки
-    print(f"Webhook received: {json.dumps(update, ensure_ascii=False)}")
     background_tasks.add_task(handle_update, update)
     return JSONResponse({"status": "ok"})
 
@@ -263,9 +243,6 @@ async def root():
 
 # ==================== УСТАНОВКА ВЕБХУКА ====================
 async def set_webhook():
-    if not PUBLIC_URL:
-        print("⚠️ PUBLIC_URL не задан, пропускаем установку вебхука")
-        return
     webhook_url = f"{PUBLIC_URL.rstrip('/')}/webhook"
     url = f"{MAX_API_URL}/subscriptions"
     payload = {"url": webhook_url, "update_types": ["message_created"]}
@@ -276,6 +253,15 @@ async def set_webhook():
             else:
                 text = await resp.text()
                 print(f"❌ Ошибка установки вебхука: {resp.status} - {text}")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup
+    await set_webhook()
+    yield
+    # shutdown (ничего не делаем)
+
+app.router.lifespan_context = lifespan
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 3000))
