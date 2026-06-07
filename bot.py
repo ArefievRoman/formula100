@@ -54,7 +54,7 @@ init_db()
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 async def send_message(user_id: int, text: str, parse_mode: str = "markdown"):
-    """Отправка сообщения получателю по его user_id"""
+    """Отправка сообщения через правильный эндпоинт /messages"""
     url = f"{MAX_API_URL}/messages"
     payload = {
         "recipient": {"user_id": user_id},
@@ -143,7 +143,6 @@ async def handle_update(update: Dict):
     if not message:
         print("Нет поля message")
         return
-    # Берём user_id отправителя из sender
     sender = message.get('sender')
     if not sender:
         print("Нет поля sender")
@@ -152,14 +151,16 @@ async def handle_update(update: Dict):
     if not user_id:
         print("Нет user_id в sender")
         return
+    
     body = message.get('body', {})
     text = body.get('text', '')
     if not text:
         print("Нет текста")
         return
+    
     print(f"Обработка сообщения от пользователя {user_id}: {text}")
     
-    # Обновляем активность
+    # Обновляем активность пользователя
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)", (user_id, datetime.now()))
