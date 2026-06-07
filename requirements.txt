@@ -1,1 +1,3 @@
-aiomax-python
+maxapi
+fastapi
+uvicorn
