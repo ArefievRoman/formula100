@@ -54,13 +54,19 @@ init_db()
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 async def send_message(chat_id: int, text: str, parse_mode: str = "markdown"):
-    url = f"{MAX_API_URL}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+    """Отправка сообщения через правильный эндпоинт /messages"""
+    url = f"{MAX_API_URL}/messages"
+    payload = {
+        "recipient": {"chat_id": chat_id},
+        "body": {"text": text}
+    }
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=HEADERS, json=payload) as resp:
             if resp.status != 200:
                 err = await resp.text()
                 print(f"send_message error {resp.status}: {err}")
+            else:
+                print(f"Сообщение отправлено в чат {chat_id}")
 
 # ==================== МОДУЛЬ WILDBERRIES ====================
 async def fetch_wb_product(article: str) -> Optional[Dict]:
@@ -133,7 +139,6 @@ async def generate_daily_menu(user_id: int) -> str:
 # ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
 async def handle_update(update: Dict):
     print(f"🔔 Получен update: {json.dumps(update, ensure_ascii=False)}")
-    # Извлекаем chat_id правильно (в MAX он в message.recipient.chat_id)
     message = update.get('message')
     if not message:
         print("Нет поля message")
@@ -144,26 +149,22 @@ async def handle_update(update: Dict):
         return
     chat_id = recipient.get('chat_id')
     if not chat_id:
-        print("Нет chat_id в recipient")
+        print("Нет chat_id")
         return
-    
-    # Получаем текст
     body = message.get('body', {})
     text = body.get('text', '')
     if not text:
         print("Нет текста")
         return
-    
     print(f"Обработка сообщения от {chat_id}: {text}")
     
-    # Обновляем активность пользователя
+    # Обновляем активность
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO users (user_id, last_activity) VALUES (?, ?)", (chat_id, datetime.now()))
     conn.commit()
     conn.close()
     
-    # Обработка команд
     if not text.startswith('/'):
         await send_message(chat_id, "Используйте команды из /help")
         return
@@ -256,10 +257,8 @@ async def set_webhook():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # startup
     await set_webhook()
     yield
-    # shutdown (ничего не делаем)
 
 app.router.lifespan_context = lifespan
 
