@@ -53,11 +53,11 @@ def init_db():
 init_db()
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-async def send_message(user_id: int, text: str, parse_mode: str = "markdown"):
-    """Отправка сообщения через правильный эндпоинт /messages"""
+async def send_message(chat_id: int, text: str):
+    """Отправка сообщения пользователю"""
     url = f"{MAX_API_URL}/messages"
     payload = {
-        "recipient": {"user_id": user_id},
+        "recipient": {"chat_id": chat_id},
         "body": {"text": text}
     }
     async with aiohttp.ClientSession() as session:
@@ -66,7 +66,7 @@ async def send_message(user_id: int, text: str, parse_mode: str = "markdown"):
                 err = await resp.text()
                 print(f"send_message error {resp.status}: {err}")
             else:
-                print(f"Сообщение отправлено пользователю {user_id}")
+                print(f"Сообщение отправлено пользователю {chat_id}")
 
 # ==================== МОДУЛЬ WILDBERRIES ====================
 async def fetch_wb_product(article: str) -> Optional[Dict]:
@@ -143,6 +143,7 @@ async def handle_update(update: Dict):
     if not message:
         print("Нет поля message")
         return
+    # Получаем ID пользователя из поля sender (отправитель сообщения)
     sender = message.get('sender')
     if not sender:
         print("Нет поля sender")
@@ -151,14 +152,12 @@ async def handle_update(update: Dict):
     if not user_id:
         print("Нет user_id в sender")
         return
-    
+    print(f"Обработка сообщения от пользователя {user_id}")
     body = message.get('body', {})
     text = body.get('text', '')
     if not text:
         print("Нет текста")
         return
-    
-    print(f"Обработка сообщения от пользователя {user_id}: {text}")
     
     # Обновляем активность пользователя
     conn = sqlite3.connect(DB_PATH)
